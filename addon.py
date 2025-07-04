@@ -209,16 +209,25 @@ def get_combined_age_rating(content_age: int, certificates_age: Optional[int]) -
 def get_rating_reasons(raw_ratings: Dict[str, Any]) -> str:
     """Extract key reasons for age rating with more detail."""
     reasons = []
+    details = []
     
     content_categories = raw_ratings.get('content_categories', {})
     
     for category, severity in content_categories.items():
-        if category == 'mpa_rating':
+        if category == 'mpa_rating' or category.endswith('_details'):
             continue
         if severity != 'none':
             reasons.append(f"{category.title()} ({severity})")
+            # Add first few details if available
+            category_details = content_categories.get(f"{category}_details", "")
+            if category_details:
+                first_detail = category_details.split('\n')[0][2:]  # Remove the "- " prefix
+                details.append(f"{category.title()}: {first_detail}")
     
-    return ', '.join(reasons) if reasons else 'Suitable for all ages'
+    result = ', '.join(reasons) if reasons else 'Suitable for all ages'
+    if details:
+        result += " | " + ', '.join(details)
+    return result
 
 def format_season_episode(id: str) -> str:
     """Format season and episode numbers."""
@@ -282,6 +291,17 @@ def parse_content_rating(soup: BeautifulSoup) -> Dict[str, str]:
                     severity_text = severity_tag.text.strip().lower()
                     normalized_severity = determine_severity(severity_text)
                     categories[key] = normalized_severity
+                    
+                    # Extract detailed list items for this category
+                    details = []
+                    li_items = severity_tag.find_all('li')
+                    for item in li_items:
+                        text = item.get_text(strip=True)
+                        if text:
+                            details.append(f"- {text}")
+                    if details:
+                        categories[f"{key}_details"] = "\n".join(details)
+                    
                     logger.info(f"Extracted {display_name}: {normalized_severity}")
                 else:
                     categories[key] = 'none'
@@ -387,8 +407,17 @@ def scrape_movie(id: str) -> Dict[str, Any]:
         # Compile content description
         content_description = ""
         for category, severity in content_categories.items():
+            if category.endswith('_details'):
+                continue  # skip the detail entries, we'll include them below
             formatted_category = category.replace('_', ' ').title()
-            content_description += f"[{formatted_category}]\n{severity.capitalize()}\n"
+            content_description += f"[{formatted_category}]\nSeverity: {severity.capitalize()}\n"
+            
+            # Add details if available
+            details = content_categories.get(f"{category}_details", "")
+            if details:
+                content_description += f"Details:\n{details}\n"
+            
+            content_description += "\n"  # Add extra newline between sections
         
         if age_certificates:
             content_description += "\n[Age Certificates]\n"
